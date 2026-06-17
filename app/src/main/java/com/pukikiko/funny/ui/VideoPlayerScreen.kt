@@ -1,15 +1,20 @@
 package com.pukikiko.funny.ui
 
+import android.graphics.Bitmap
 import android.net.Uri
 import kotlin.OptIn
 import android.util.Log
 import android.view.KeyEvent
+import android.view.LayoutInflater
+import android.view.TextureView
 import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.ArrowDownward
 import androidx.compose.material.icons.filled.ArrowUpward
@@ -23,12 +28,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.media3.common.MediaItem
@@ -41,6 +47,7 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Button
 import androidx.tv.material3.OutlinedButton
+import com.pukikiko.funny.R
 import com.pukikiko.funny.api.RetrofitClient
 import com.pukikiko.funny.api.VideoModel
 import com.pukikiko.funny.api.VoteRequest
@@ -57,11 +64,12 @@ fun VideoPlayerScreen(repository: WatchedRepository) {
     val sessionVideos = remember { mutableStateListOf<VideoModel>() }
     var currentIndex by remember { mutableIntStateOf(-1) }
     
-    var isLoading by remember { mutableStateOf(true) }
+    var isLoading by remember { mutableStateOf(false) }
     var exoPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
     val focusRequester = remember { FocusRequester() }
     val settingsFocusRequester = remember { FocusRequester() }
     var feedbackMessage by remember { mutableStateOf<String?>(null) }
+    var lastFeedback by remember { mutableStateOf("") }
     
     var showControls by remember { mutableStateOf(true) }
     var showSettings by remember { mutableStateOf(false) }
@@ -69,7 +77,9 @@ fun VideoPlayerScreen(repository: WatchedRepository) {
     var instanceUrl by remember { mutableStateOf(repository.getBaseUrl()) }
     var centerDownTime by remember { mutableLongStateOf(0L) }
     var hasVotedCurrentVideo by remember { mutableStateOf(false) }
-    var lastFeedback by remember { mutableStateOf("") }
+
+    val currentTextureView = remember { mutableStateOf<TextureView?>(null) }
+    var currentSnapshot by remember { mutableStateOf<Bitmap?>(null) }
 
     fun playCurrentVideo() {
         if (currentIndex in sessionVideos.indices) {
@@ -87,21 +97,27 @@ fun VideoPlayerScreen(repository: WatchedRepository) {
         }
     }
 
+    fun navigateTo(index: Int) {
+        if (index == currentIndex) return
+        currentSnapshot = currentTextureView.value?.bitmap
+        currentIndex = index
+        playCurrentVideo()
+    }
+
     fun loadNextVideo() {
         if (currentIndex < sessionVideos.size - 1) {
-            currentIndex++
-            playCurrentVideo()
+            navigateTo(currentIndex + 1)
         } else {
+            if (isLoading) return
+            isLoading = true
             coroutineScope.launch {
-                isLoading = true
                 try {
                     val watchedString = repository.getWatchedString()
                     val api = RetrofitClient.getApi(instanceUrl)
                     val video = api.getNextVideo(watchedString)
                     sessionVideos.add(video)
                     repository.addWatchedId(video.id)
-                    currentIndex++
-                    playCurrentVideo()
+                    navigateTo(currentIndex + 1)
                 } catch (e: Exception) {
                     Log.e("FunnyTV", "Error loading next video", e)
                 } finally {
@@ -113,8 +129,7 @@ fun VideoPlayerScreen(repository: WatchedRepository) {
     
     fun loadPreviousVideo() {
         if (currentIndex > 0) {
-            currentIndex--
-            playCurrentVideo()
+            navigateTo(currentIndex - 1)
         }
     }
 
@@ -152,26 +167,21 @@ fun VideoPlayerScreen(repository: WatchedRepository) {
         }
     }
 
+    LaunchedEffect(feedbackMessage) {
+        if (feedbackMessage != null) lastFeedback = feedbackMessage!!
+    }
+
     LaunchedEffect(Unit) {
         focusRequester.requestFocus()
     }
 
     LaunchedEffect(showSettings) {
         if (showSettings) {
-            // Give the UI a tiny moment to compose the settings dialog before requesting focus
             delay(50)
-            try {
-                settingsFocusRequester.requestFocus()
-            } catch (e: Exception) {}
+            try { settingsFocusRequester.requestFocus() } catch (e: Exception) {}
         } else {
-            try {
-                focusRequester.requestFocus()
-            } catch (e: Exception) {}
+            try { focusRequester.requestFocus() } catch (e: Exception) {}
         }
-    }
-
-    LaunchedEffect(feedbackMessage) {
-        if (feedbackMessage != null) lastFeedback = feedbackMessage!!
     }
 
     LaunchedEffect(showControls, showSettings) {
@@ -193,7 +203,6 @@ fun VideoPlayerScreen(repository: WatchedRepository) {
                         showSettings = false
                         return@onKeyEvent true
                     }
-                    // Let the focus system handle the keys for the buttons inside settings
                     return@onKeyEvent false
                 }
 
@@ -276,16 +285,28 @@ fun VideoPlayerScreen(repository: WatchedRepository) {
                 },
                 label = "VideoScroll"
             ) { index ->
-                if (index in sessionVideos.indices) {
+                if (index == currentIndex) {
                     AndroidView(
                         factory = { ctx ->
-                            PlayerView(ctx).apply {
-                                player = exoPlayer
-                                useController = false
-                            }
+                            val inflater = LayoutInflater.from(ctx)
+                            val view = inflater.inflate(R.layout.texture_player_view, null) as PlayerView
+                            currentTextureView.value = view.videoSurfaceView as? TextureView
+                            view.player = exoPlayer
+                            view
                         },
                         modifier = Modifier.fillMaxSize()
                     )
+                } else {
+                    if (currentSnapshot != null) {
+                        Image(
+                            bitmap = currentSnapshot!!.asImageBitmap(),
+                            contentDescription = null,
+                            modifier = Modifier.fillMaxSize(),
+                            contentScale = ContentScale.Fit
+                        )
+                    } else {
+                        Box(Modifier.fillMaxSize().background(Color.Black))
+                    }
                 }
             }
 
@@ -391,6 +412,7 @@ fun VideoPlayerScreen(repository: WatchedRepository) {
                                 repository.setBaseUrl(instanceUrl)
                                 sessionVideos.clear()
                                 currentIndex = -1
+                                currentSnapshot = null
                                 loadNextVideo()
                                 showSettings = false
                             }
