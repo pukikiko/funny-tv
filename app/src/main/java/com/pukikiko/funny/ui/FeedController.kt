@@ -11,6 +11,7 @@ import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
 import androidx.media3.exoplayer.ExoPlayer
 import com.pukikiko.funny.api.RetrofitClient
 import com.pukikiko.funny.api.VideoModel
@@ -33,15 +34,22 @@ private const val TAG = "FunnyTV"
 /**
  * Everything the feed does, independent of how it is driven. The tv flavour
  * points a D-pad at this, the mobile flavour points fingers at it.
+ *
+ * Two players are kept alive: one showing the current video and one quietly
+ * buffering the next, so a skip starts instantly instead of waiting on the
+ * network. Advancing swaps which is which.
  */
 class FeedController(
     private val context: Context,
     private val repository: WatchedRepository,
-    private val scope: CoroutineScope,
-    val player: ExoPlayer
+    private val scope: CoroutineScope
 ) {
     val videos = mutableStateListOf<VideoModel>()
 
+    val players: List<ExoPlayer> = List(2) { createPlayer() }
+
+    var activeSlot by mutableIntStateOf(0)
+        private set
     var currentIndex by mutableIntStateOf(-1)
         private set
     var isLoading by mutableStateOf(true)
@@ -62,18 +70,32 @@ class FeedController(
         private set
     var instanceUrl by mutableStateOf(repository.getBaseUrl())
         private set
-    var hasVoted by mutableStateOf(false)
+
+    /** "up", "down", or null when the current video hasn't been voted on. */
+    var votedAction by mutableStateOf<String?>(null)
         private set
 
     private var statusJob: Job? = null
-    private var prefetchJob: Job? = null
-    private var volumeBeforeMute = 0.5f
+
+    val player: ExoPlayer get() = players[activeSlot]
+    private val standbyPlayer: ExoPlayer get() = players[1 - activeSlot]
 
     val current: VideoModel? get() = videos.getOrNull(currentIndex)
     val canGoBack: Boolean get() = currentIndex > 0
     val progress: Float
         get() = if (durationMs > 0) (positionMs.toFloat() / durationMs).coerceIn(0f, 1f) else 0f
     val currentUrl: String? get() = current?.let { videoUrl(instanceUrl, it.filename) }
+
+    private fun createPlayer(): ExoPlayer =
+        ExoPlayer.Builder(context).build().apply {
+            repeatMode = Player.REPEAT_MODE_ALL
+            playWhenReady = false
+            volume = repository.getVolume()
+        }
+
+    fun release() {
+        players.forEach { it.release() }
+    }
 
     fun showStatus(message: String, millis: Long = 2500) {
         statusJob?.cancel()
@@ -105,48 +127,81 @@ class FeedController(
         }
     }
 
-    /** Keeps one video queued ahead so a skip doesn't wait on the network. */
-    private fun prefetch() {
-        if (currentIndex < videos.size - 1) return
-        if (prefetchJob?.isActive == true) return
-        prefetchJob = scope.launch { fetchOne() }
+    private fun bind(player: ExoPlayer, video: VideoModel) {
+        if (player.currentMediaItem?.mediaId == video.id.toString()) return
+        player.setMediaItem(
+            MediaItem.Builder()
+                .setUri(Uri.parse(videoUrl(instanceUrl, video.filename)))
+                .setMediaId(video.id.toString())
+                .build()
+        )
+        player.prepare()
     }
 
-    fun next() {
-        if (currentIndex < videos.size - 1) {
-            currentIndex++
-            playCurrent()
-            prefetch()
-            return
-        }
+    fun start() {
         scope.launch {
-            isLoading = true
-            val video = fetchOne()
-            isLoading = false
-            if (video != null) {
-                currentIndex++
-                playCurrent()
-                prefetch()
+            if (videos.isEmpty()) {
+                isLoading = true
+                fetchOne()
+                isLoading = false
             }
+            if (currentIndex < 0 && videos.isNotEmpty()) {
+                currentIndex = 0
+                playCurrent()
+            }
+            ensureNext()
         }
     }
 
-    fun previous() {
-        if (!canGoBack) return
-        currentIndex--
-        playCurrent()
-    }
-
-    fun playCurrent() {
+    private fun playCurrent() {
         val video = current ?: return
-        hasVoted = false
+        votedAction = null
         positionMs = 0L
         durationMs = 0L
-        player.stop()
-        player.setMediaItem(MediaItem.fromUri(Uri.parse(videoUrl(instanceUrl, video.filename))))
-        player.volume = volume
-        player.prepare()
-        player.play()
+        val active = player
+        bind(active, video)
+        active.volume = volume
+        active.seekTo(0)
+        active.play()
+        standbyPlayer.pause()
+    }
+
+    /**
+     * Guarantees the next video exists and is buffering on the standby player.
+     * Returns false when there is nothing more to show.
+     */
+    suspend fun ensureNext(): Boolean {
+        if (currentIndex + 1 >= videos.size) {
+            isLoading = true
+            val fetched = fetchOne()
+            isLoading = false
+            if (fetched == null) return false
+        }
+        val nextVideo = videos.getOrNull(currentIndex + 1) ?: return false
+        val standby = standbyPlayer
+        bind(standby, nextVideo)
+        standby.volume = volume
+        standby.playWhenReady = false
+        return true
+    }
+
+    /** Promotes the buffered standby player to the visible one. */
+    fun advance() {
+        if (currentIndex + 1 >= videos.size) return
+        player.pause()
+        activeSlot = 1 - activeSlot
+        currentIndex++
+        playCurrent()
+        scope.launch { ensureNext() }
+    }
+
+    fun goBack() {
+        if (!canGoBack) return
+        player.pause()
+        activeSlot = 1 - activeSlot
+        currentIndex--
+        playCurrent()
+        scope.launch { ensureNext() }
     }
 
     // ---- Playback ----
@@ -171,9 +226,10 @@ class FeedController(
 
     /** Polled from the UI so the scrubber and play indicator stay in step. */
     fun syncPlaybackState() {
-        isPlaying = player.isPlaying
-        positionMs = player.currentPosition.coerceAtLeast(0L)
-        val duration = player.duration
+        val active = player
+        isPlaying = active.isPlaying
+        positionMs = active.currentPosition.coerceAtLeast(0L)
+        val duration = active.duration
         durationMs = if (duration > 0) duration else 0L
     }
 
@@ -181,38 +237,34 @@ class FeedController(
 
     fun changeVolume(value: Float) {
         volume = value.coerceIn(0f, 1f)
-        player.volume = volume
+        players.forEach { it.volume = volume }
         repository.setVolume(volume)
-    }
-
-    fun toggleMute() {
-        if (volume > 0f) {
-            volumeBeforeMute = volume
-            changeVolume(0f)
-        } else {
-            changeVolume(if (volumeBeforeMute > 0f) volumeBeforeMute else 0.5f)
-        }
     }
 
     // ---- Feed mode ----
 
     fun cycleMode() {
-        feedMode = FeedMode.next(feedMode)
+        applyFeedMode(FeedMode.next(feedMode))
         repository.setFeedMode(feedMode)
+        showStatus("Mode: ${FeedMode.label(feedMode)}")
+    }
+
+    private fun applyFeedMode(mode: String) {
+        feedMode = mode
         // Drop anything queued under the old mode so the switch takes effect now.
         while (videos.size > currentIndex + 1) {
             videos.removeAt(videos.size - 1)
         }
-        showStatus("Mode: ${FeedMode.label(feedMode)}")
-        prefetch()
+        standbyPlayer.clearMediaItems()
+        scope.launch { ensureNext() }
     }
 
     // ---- Voting ----
 
     fun vote(action: String) {
-        if (hasVoted) return
+        if (votedAction != null) return
         val video = current ?: return
-        hasVoted = true
+        votedAction = action
         voteFeedback = if (action == "up") "👍" else "👎"
         scope.launch {
             try {
@@ -221,7 +273,7 @@ class FeedController(
                 if (index >= 0) videos[index] = updated
             } catch (e: Exception) {
                 Log.e(TAG, "Error voting", e)
-                hasVoted = false
+                votedAction = null
                 showStatus("Vote failed")
             }
             delay(2000)
@@ -268,13 +320,40 @@ class FeedController(
 
     // ---- Instance ----
 
+    /** Picks up anything the settings screen changed while we were backgrounded. */
+    fun refreshFromPrefs() {
+        val savedVolume = repository.getVolume()
+        if (savedVolume != volume) {
+            volume = savedVolume
+            players.forEach { it.volume = savedVolume }
+        }
+
+        val savedMode = repository.getFeedMode()
+        if (savedMode != feedMode) applyFeedMode(savedMode)
+
+        val savedUrl = repository.getBaseUrl()
+        if (savedUrl != instanceUrl) {
+            instanceUrl = savedUrl
+            restart()
+        }
+    }
+
     fun changeInstanceUrl(url: String) {
         val trimmed = url.trim()
-        if (trimmed.isEmpty()) return
+        if (trimmed.isEmpty() || trimmed == instanceUrl) return
         instanceUrl = trimmed
         repository.setBaseUrl(trimmed)
+        restart()
+    }
+
+    private fun restart() {
         videos.clear()
         currentIndex = -1
-        next()
+        // Ids repeat across instances, so wipe the items or bind() would skip.
+        players.forEach {
+            it.stop()
+            it.clearMediaItems()
+        }
+        start()
     }
 }

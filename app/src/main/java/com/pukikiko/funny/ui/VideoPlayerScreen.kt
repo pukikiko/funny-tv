@@ -1,33 +1,28 @@
 package com.pukikiko.funny.ui
 
-import androidx.activity.compose.rememberLauncherForActivityResult
-import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.ExperimentalAnimationApi
-import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
-import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
-import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.Player
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
 import androidx.tv.material3.ExperimentalTvMaterial3Api
@@ -35,39 +30,26 @@ import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
 import com.pukikiko.funny.data.WatchedRepository
 import kotlinx.coroutines.delay
+import kotlin.math.roundToInt
 
 /**
- * The parts of the feed that look the same everywhere: the player surface, the
- * paused indicator, vote feedback and status messages. Input and on-screen
+ * The parts of the feed that look the same everywhere: the player surfaces,
+ * the paused indicator, vote feedback and status messages. Input and on-screen
  * controls come from [PlatformControls], which each flavour supplies.
  */
-@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalAnimationApi::class)
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun VideoPlayerScreen(repository: WatchedRepository) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-
-    val player = remember {
-        ExoPlayer.Builder(context).build().apply {
-            repeatMode = Player.REPEAT_MODE_ALL
-            playWhenReady = true
-        }
-    }
-    val feed = remember { FeedController(context, repository, coroutineScope, player) }
-
-    var showSettings by remember { mutableStateOf(false) }
-
-    val pickVideo = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
-        uri?.let { feed.upload(it) }
-    }
-    val onUpload = { pickVideo.launch("video/*") }
+    val feed = remember { FeedController(context, repository, coroutineScope) }
 
     DisposableEffect(Unit) {
-        onDispose { player.release() }
+        onDispose { feed.release() }
     }
 
     LaunchedEffect(Unit) {
-        feed.next()
+        feed.start()
     }
 
     LaunchedEffect(Unit) {
@@ -77,46 +59,47 @@ fun VideoPlayerScreen(repository: WatchedRepository) {
         }
     }
 
-    Box(
+    // Settings live in a separate screen on mobile, so pick up any change on return.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) feed.refreshFromPrefs()
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
             .background(FunnyColors.Background),
         contentAlignment = Alignment.Center
     ) {
+        val heightPx = with(LocalDensity.current) { maxHeight.toPx() }
+        val scroll = remember(heightPx) { FeedScroll(feed, coroutineScope, heightPx) }
+
         if (feed.videos.isEmpty()) {
             Text(
                 if (feed.isLoading) "Loading..." else "No more videos available.",
                 color = FunnyColors.Text
             )
         } else {
-            AnimatedContent(
-                targetState = feed.currentIndex,
-                transitionSpec = {
-                    if (targetState > initialState) {
-                        slideInVertically(tween(500)) { height -> height } togetherWith
-                            slideOutVertically(tween(500)) { height -> -height }
-                    } else {
-                        slideInVertically(tween(500)) { height -> -height } togetherWith
-                            slideOutVertically(tween(500)) { height -> height }
-                    }
-                },
-                label = "VideoScroll"
-            ) { index ->
-                if (index in feed.videos.indices) {
-                    AndroidView(
-                        factory = { ctx ->
-                            PlayerView(ctx).apply {
-                                this.player = player
-                                useController = false
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
+            // Each surface keeps its own player for the whole session; only the
+            // offsets change, so swapping never re-attaches a video surface.
+            feed.players.forEachIndexed { slot, player ->
+                val restingOffset = if (slot == feed.activeSlot) 0f else heightPx
+                PlayerSurface(
+                    player = player,
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .offset {
+                            IntOffset(0, (scroll.offset.value + restingOffset).roundToInt())
+                        }
+                )
             }
 
             AnimatedVisibility(
-                visible = !feed.isPlaying && !showSettings,
+                visible = !feed.isPlaying,
                 enter = fadeIn(tween(150)),
                 exit = fadeOut(tween(300)),
                 modifier = Modifier.align(Alignment.Center)
@@ -140,9 +123,7 @@ fun VideoPlayerScreen(repository: WatchedRepository) {
 
         PlatformControls(
             feed = feed,
-            settingsOpen = showSettings,
-            setSettingsOpen = { showSettings = it },
-            onUpload = onUpload,
+            scroll = scroll,
             modifier = Modifier.fillMaxSize()
         )
 
@@ -154,14 +135,19 @@ fun VideoPlayerScreen(repository: WatchedRepository) {
         ) {
             StatusPill(feed.status ?: "")
         }
-
-        if (showSettings) {
-            SettingsDialog(
-                feed = feed,
-                onUpload = onUpload,
-                autoFocusUrl = isTvFlavour,
-                onDismiss = { showSettings = false }
-            )
-        }
     }
+}
+
+@Composable
+private fun PlayerSurface(player: ExoPlayer, modifier: Modifier = Modifier) {
+    AndroidView(
+        factory = { ctx ->
+            PlayerView(ctx).apply {
+                useController = false
+                setBackgroundColor(android.graphics.Color.BLACK)
+            }
+        },
+        update = { it.player = player },
+        modifier = modifier
+    )
 }
