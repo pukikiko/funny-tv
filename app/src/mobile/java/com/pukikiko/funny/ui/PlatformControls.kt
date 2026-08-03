@@ -1,10 +1,17 @@
 package com.pukikiko.funny.ui
 
+import android.content.Intent
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.Orientation
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.foundation.gestures.draggable
+import androidx.compose.foundation.gestures.rememberDraggableState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -41,28 +48,29 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
-import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
+import com.pukikiko.funny.SettingsActivity
 import com.pukikiko.funny.data.FeedMode
-
-const val isTvFlavour = false
 
 /** Touch controls: swipe the feed, tap to pause, drag to seek. */
 @Composable
 fun PlatformControls(
     feed: FeedController,
-    settingsOpen: Boolean,
-    setSettingsOpen: (Boolean) -> Unit,
-    onUpload: () -> Unit,
+    scroll: FeedScroll,
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var volumeOpen by remember { mutableStateOf(false) }
     var shareOpen by remember { mutableStateOf(false) }
-    val swipeThreshold = with(LocalDensity.current) { 72.dp.toPx() }
+
+    val pickVideo = rememberLauncherForActivityResult(ActivityResultContracts.GetContent()) { uri ->
+        uri?.let { feed.upload(it) }
+    }
 
     fun closePopups() {
         volumeOpen = false
@@ -71,53 +79,51 @@ fun PlatformControls(
 
     Box(
         modifier = modifier
-            .pointerInput(settingsOpen) {
-                if (settingsOpen) return@pointerInput
+            .pointerInput(Unit) {
                 detectTapGestures(
                     onTap = {
                         if (volumeOpen || shareOpen) closePopups() else feed.togglePlayPause()
                     }
                 )
             }
-            .pointerInput(settingsOpen) {
-                if (settingsOpen) return@pointerInput
-                var travelled = 0f
-                detectVerticalDragGestures(
-                    onDragStart = { travelled = 0f },
-                    onDragEnd = {
-                        when {
-                            travelled <= -swipeThreshold -> feed.next()
-                            travelled >= swipeThreshold -> feed.previous()
-                        }
-                    }
-                ) { _, delta -> travelled += delta }
-            }
+            .draggable(
+                orientation = Orientation.Vertical,
+                state = rememberDraggableState { delta -> scroll.onDrag(delta) },
+                onDragStarted = { closePopups() },
+                onDragStopped = { velocity -> scroll.onDragEnd(velocity) }
+            )
     ) {
-        if (settingsOpen) return@Box
-
         ActionRail(
             feed = feed,
             volumeOpen = volumeOpen,
             shareOpen = shareOpen,
-            onToggleVolume = { volumeOpen = !volumeOpen; shareOpen = false },
-            onToggleShare = { shareOpen = !shareOpen; volumeOpen = false },
-            onUpload = onUpload,
-            onOpenSettings = { closePopups(); setSettingsOpen(true) },
+            onToggleVolume = {
+                volumeOpen = !volumeOpen
+                shareOpen = false
+            },
+            onToggleShare = {
+                shareOpen = !shareOpen
+                volumeOpen = false
+            },
+            onUpload = { pickVideo.launch("video/*") },
+            onOpenSettings = {
+                closePopups()
+                context.startActivity(Intent(context, SettingsActivity::class.java))
+            },
             modifier = Modifier
-                .align(Alignment.CenterEnd)
-                .padding(end = 12.dp)
+                .align(Alignment.BottomEnd)
+                .padding(end = 20.dp, bottom = 40.dp)
         )
 
         Scrubber(
             feed = feed,
             modifier = Modifier
                 .align(Alignment.BottomCenter)
-                .padding(horizontal = 12.dp, vertical = 16.dp)
+                .padding(horizontal = 8.dp)
         )
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun ActionRail(
     feed: FeedController,
@@ -131,8 +137,8 @@ private fun ActionRail(
 ) {
     Column(
         modifier = modifier,
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.spacedBy(14.dp)
+        horizontalAlignment = Alignment.End,
+        verticalArrangement = Arrangement.spacedBy(20.dp)
     ) {
         if (volumeOpen) {
             VolumeSlider(feed)
@@ -157,7 +163,7 @@ private fun ActionRail(
             icon = Icons.Default.ThumbUp,
             description = "Like",
             count = feed.current?.thumbs_up,
-            tint = if (feed.hasVoted) FunnyColors.Success else FunnyColors.Text,
+            tint = if (feed.votedAction == "up") FunnyColors.Success else FunnyColors.Text,
             onClick = { feed.vote("up") }
         )
 
@@ -165,7 +171,7 @@ private fun ActionRail(
             icon = Icons.Default.ThumbDown,
             description = "Dislike",
             count = feed.current?.thumbs_down,
-            tint = if (feed.hasVoted) FunnyColors.Danger else FunnyColors.Text,
+            tint = if (feed.votedAction == "down") FunnyColors.Danger else FunnyColors.Text,
             onClick = { feed.vote("down") }
         )
 
@@ -206,7 +212,8 @@ private fun RailButton(
         Box(
             modifier = Modifier
                 .size(46.dp)
-                .background(Color.Black.copy(alpha = 0.45f), CircleShape)
+                .background(FunnyColors.Glass, CircleShape)
+                .border(1.dp, FunnyColors.Border, CircleShape)
                 .clickable(onClick = onClick),
             contentAlignment = Alignment.Center
         ) {
@@ -225,7 +232,8 @@ private fun VolumeSlider(feed: FeedController) {
         modifier = Modifier
             .width(46.dp)
             .height(130.dp)
-            .background(Color.Black.copy(alpha = 0.45f), RoundedCornerShape(23.dp))
+            .background(FunnyColors.Glass, RoundedCornerShape(23.dp))
+            .border(1.dp, FunnyColors.Border, RoundedCornerShape(23.dp))
             .padding(vertical = 12.dp, horizontal = 19.dp)
             .pointerInput(Unit) {
                 detectVerticalDragGestures(
@@ -253,12 +261,12 @@ private fun VolumeSlider(feed: FeedController) {
     }
 }
 
-@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 private fun SharePopup(feed: FeedController) {
     Column(
         modifier = Modifier
-            .background(FunnyColors.Panel, RoundedCornerShape(12.dp))
+            .background(FunnyColors.Glass, RoundedCornerShape(12.dp))
+            .border(1.dp, FunnyColors.Border, RoundedCornerShape(12.dp))
             .padding(8.dp),
         verticalArrangement = Arrangement.spacedBy(4.dp)
     ) {

@@ -26,6 +26,9 @@ import androidx.tv.material3.Text
 object FunnyColors {
     val Background = Color(0xFF020617)
     val Panel = Color(0xE60F172A)
+
+    /** The web's --glass-bg / --glass-border pair. */
+    val Glass = Color(0x990F172A)
     val Border = Color(0x1AFFFFFF)
     val Text = Color(0xFFF8FAFC)
     val Muted = Color(0xFF94A3B8)
