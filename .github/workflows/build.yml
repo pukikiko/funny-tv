@@ -36,12 +36,8 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      # The repo has no Gradle wrapper, so pin the version here instead.
-      # Keep this in sync with gradle/wrapper/gradle-wrapper.properties.
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: '8.2'
 
       - name: Install Android SDK packages
         run: |
@@ -51,7 +47,7 @@ jobs:
           "$SDKMANAGER" "platforms;android-34" "build-tools;34.0.0"
 
       - name: Build ${{ matrix.label }} release APK
-        run: gradle --no-daemon --stacktrace ${{ matrix.task }}
+        run: ./gradlew --no-daemon --stacktrace ${{ matrix.task }}
 
       - name: Verify the APK is signed with the test key
         id: verify
