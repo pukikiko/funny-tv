@@ -42,6 +42,10 @@ captures/
 *.jks
 *.keystore
 
+# ...except the public test key. It is deliberately committed so CI and local
+# builds share one signing certificate. It signs nothing that ships.
+!app/testkey.jks
+
 # External native build folder generated in Android Studio 2.2 and later
 .externalNativeBuild/
 .cxx/
