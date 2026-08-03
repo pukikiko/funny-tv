@@ -43,10 +43,7 @@ import androidx.tv.material3.ExperimentalTvMaterial3Api
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.Text
-import com.pukikiko.funny.data.FeedMode
 import kotlinx.coroutines.delay
-
-const val isTvFlavour = true
 
 private const val LONG_PRESS_MS = 600L
 private const val SEEK_STEP_MS = 10_000L
@@ -56,23 +53,22 @@ private const val SEEK_STEP_MS = 10_000L
 @Composable
 fun PlatformControls(
     feed: FeedController,
-    settingsOpen: Boolean,
-    setSettingsOpen: (Boolean) -> Unit,
-    onUpload: () -> Unit,
+    scroll: FeedScroll,
     modifier: Modifier = Modifier
 ) {
     var showControls by remember { mutableStateOf(true) }
+    var showSettings by remember { mutableStateOf(false) }
     var centerDownTime by remember { mutableLongStateOf(0L) }
     val focusRequester = remember { FocusRequester() }
 
-    LaunchedEffect(settingsOpen) {
-        if (!settingsOpen) {
+    LaunchedEffect(showSettings) {
+        if (!showSettings) {
             runCatching { focusRequester.requestFocus() }
         }
     }
 
-    LaunchedEffect(showControls, settingsOpen) {
-        if (showControls && !settingsOpen) {
+    LaunchedEffect(showControls, showSettings) {
+        if (showControls && !showSettings) {
             delay(3000)
             showControls = false
         }
@@ -85,9 +81,9 @@ fun PlatformControls(
             .onKeyEvent { keyEvent ->
                 val event = keyEvent.nativeKeyEvent
 
-                if (settingsOpen) {
+                if (showSettings) {
                     if (event.action == KeyEvent.ACTION_DOWN && event.keyCode == KeyEvent.KEYCODE_BACK) {
-                        setSettingsOpen(false)
+                        showSettings = false
                         return@onKeyEvent true
                     }
                     // Let the focus system drive the buttons inside the dialog.
@@ -99,11 +95,11 @@ fun PlatformControls(
                         showControls = true
                         when (event.keyCode) {
                             KeyEvent.KEYCODE_DPAD_DOWN -> {
-                                feed.next()
+                                scroll.next()
                                 true
                             }
                             KeyEvent.KEYCODE_DPAD_UP -> {
-                                feed.previous()
+                                scroll.previous()
                                 true
                             }
                             KeyEvent.KEYCODE_DPAD_RIGHT -> {
@@ -123,7 +119,7 @@ fun PlatformControls(
                                 true
                             }
                             KeyEvent.KEYCODE_MENU, KeyEvent.KEYCODE_INFO -> {
-                                setSettingsOpen(true)
+                                showSettings = true
                                 true
                             }
                             KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
@@ -143,7 +139,7 @@ fun PlatformControls(
                             if (centerDownTime > 0) {
                                 val heldFor = System.currentTimeMillis() - centerDownTime
                                 if (heldFor > LONG_PRESS_MS) {
-                                    setSettingsOpen(true)
+                                    showSettings = true
                                 } else {
                                     feed.togglePlayPause()
                                 }
@@ -160,12 +156,16 @@ fun PlatformControls(
             }
     ) {
         AnimatedVisibility(
-            visible = showControls && !settingsOpen,
+            visible = showControls && !showSettings,
             enter = fadeIn(tween(300)),
             exit = fadeOut(tween(500)),
             modifier = Modifier.align(Alignment.BottomStart)
         ) {
             TvOverlay(feed)
+        }
+
+        if (showSettings) {
+            TvSettingsDialog(feed = feed, onDismiss = { showSettings = false })
         }
     }
 }
@@ -198,7 +198,12 @@ private fun TvOverlay(feed: FeedController) {
             }
 
             Hint {
-                Icon(Icons.Default.ThumbDown, "Left", tint = FunnyColors.Danger, modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.Default.ThumbDown,
+                    "Left",
+                    tint = if (feed.votedAction == "down") FunnyColors.Danger else Color.White,
+                    modifier = Modifier.size(16.dp)
+                )
                 Spacer(Modifier.width(4.dp))
                 Text(
                     "${feed.current?.thumbs_down ?: 0}",
@@ -206,7 +211,12 @@ private fun TvOverlay(feed: FeedController) {
                     style = MaterialTheme.typography.titleMedium
                 )
                 Spacer(Modifier.width(12.dp))
-                Icon(Icons.Default.ThumbUp, "Right", tint = FunnyColors.Success, modifier = Modifier.size(16.dp))
+                Icon(
+                    Icons.Default.ThumbUp,
+                    "Right",
+                    tint = if (feed.votedAction == "up") FunnyColors.Success else Color.White,
+                    modifier = Modifier.size(16.dp)
+                )
                 Spacer(Modifier.width(4.dp))
                 Text(
                     "${feed.current?.thumbs_up ?: 0}",
@@ -224,11 +234,7 @@ private fun TvOverlay(feed: FeedController) {
             Hint {
                 Icon(Icons.Default.Settings, "Long Center", tint = Color.White, modifier = Modifier.size(20.dp))
                 Spacer(Modifier.width(8.dp))
-                Text(
-                    "Hold for ${FeedMode.label(feed.feedMode)}, volume, share",
-                    color = Color.White,
-                    style = MaterialTheme.typography.titleMedium
-                )
+                Text("Hold for Settings", color = Color.White, style = MaterialTheme.typography.titleMedium)
             }
         }
     }
