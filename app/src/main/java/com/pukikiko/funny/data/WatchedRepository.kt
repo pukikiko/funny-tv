@@ -42,4 +42,41 @@ class WatchedRepository(context: Context) {
     fun setBaseUrl(url: String) {
         prefs.edit().putString(BASE_URL_KEY, url).apply()
     }
+
+    private val MODE_KEY = "feed_mode"
+    private val VOLUME_KEY = "volume"
+
+    fun getFeedMode(): String {
+        val mode = prefs.getString(MODE_KEY, FeedMode.DEFAULT)
+        return if (mode in FeedMode.ALL) mode!! else FeedMode.DEFAULT
+    }
+
+    fun setFeedMode(mode: String) {
+        prefs.edit().putString(MODE_KEY, if (mode in FeedMode.ALL) mode else FeedMode.DEFAULT).apply()
+    }
+
+    // Matches the web player's default of half volume.
+    fun getVolume(): Float {
+        return prefs.getFloat(VOLUME_KEY, 0.5f).coerceIn(0f, 1f)
+    }
+
+    fun setVolume(volume: Float) {
+        prefs.edit().putFloat(VOLUME_KEY, volume.coerceIn(0f, 1f)).apply()
+    }
+}
+
+/** Feed selection modes offered by the server's /api/video/next endpoint. */
+object FeedMode {
+    const val ALGORITHM = "algorithm"
+    const val RANDOM = "random"
+
+    const val DEFAULT = ALGORITHM
+    val ALL = listOf(ALGORITHM, RANDOM)
+
+    fun label(mode: String): String = when (mode) {
+        RANDOM -> "Randomised"
+        else -> "PipeAI Algorithm"
+    }
+
+    fun next(mode: String): String = ALL[(ALL.indexOf(mode) + 1).mod(ALL.size)]
 }
