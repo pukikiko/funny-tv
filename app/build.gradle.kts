@@ -18,10 +18,38 @@ android {
         }
     }
 
+    flavorDimensions += "formFactor"
+    productFlavors {
+        create("tv") {
+            dimension = "formFactor"
+            versionNameSuffix = "-tv"
+        }
+        create("mobile") {
+            dimension = "formFactor"
+            versionNameSuffix = "-mobile"
+        }
+    }
+
+    // Public test key, committed to the repo on purpose. Every build is signed
+    // with the same certificate so APKs upgrade-install over each other.
+    // NEVER use this for a real release: the private key is public.
+    signingConfigs {
+        create("testkey") {
+            storeFile = file("testkey.jks")
+            storePassword = "android"
+            keyAlias = "testkey"
+            keyPassword = "android"
+        }
+    }
+
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.getByName("testkey")
+        }
         release {
             isMinifyEnabled = false
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            signingConfig = signingConfigs.getByName("testkey")
         }
     }
     compileOptions {
