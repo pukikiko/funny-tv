@@ -1,417 +1,153 @@
 package com.pukikiko.funny.ui
 
-import android.net.Uri
-import kotlin.OptIn
-import android.util.Log
-import android.view.KeyEvent
-import androidx.compose.animation.*
+import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
-import androidx.compose.foundation.focusable
-import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.ArrowDownward
-import androidx.compose.material.icons.filled.ArrowUpward
-import androidx.compose.material.icons.filled.PlayArrow
-import androidx.compose.material.icons.filled.Settings
-import androidx.compose.material.icons.filled.ThumbDown
-import androidx.compose.material.icons.filled.ThumbUp
-import androidx.compose.runtime.*
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.offset
+import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.focus.FocusRequester
-import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.unit.dp
-import androidx.compose.foundation.text.BasicTextField
-import androidx.compose.ui.text.TextStyle
-import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.unit.sp
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalLifecycleOwner
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.media3.common.MediaItem
-import androidx.media3.common.Player
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.media3.exoplayer.ExoPlayer
 import androidx.media3.ui.PlayerView
-import androidx.tv.material3.Text
-import androidx.tv.material3.Icon
-import androidx.tv.material3.MaterialTheme
 import androidx.tv.material3.ExperimentalTvMaterial3Api
-import androidx.tv.material3.Button
-import androidx.tv.material3.OutlinedButton
-import com.pukikiko.funny.api.RetrofitClient
-import com.pukikiko.funny.api.VideoModel
-import com.pukikiko.funny.api.VoteRequest
+import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.Text
 import com.pukikiko.funny.data.WatchedRepository
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
+import kotlin.math.roundToInt
 
-@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalAnimationApi::class)
+/**
+ * The parts of the feed that look the same everywhere: the player surfaces,
+ * the paused indicator, vote feedback and status messages. Input and on-screen
+ * controls come from [PlatformControls], which each flavour supplies.
+ */
+@OptIn(ExperimentalTvMaterial3Api::class)
 @Composable
 fun VideoPlayerScreen(repository: WatchedRepository) {
     val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
-    
-    val sessionVideos = remember { mutableStateListOf<VideoModel>() }
-    var currentIndex by remember { mutableIntStateOf(-1) }
-    
-    var isLoading by remember { mutableStateOf(true) }
-    var exoPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
-    val focusRequester = remember { FocusRequester() }
-    val settingsFocusRequester = remember { FocusRequester() }
-    var feedbackMessage by remember { mutableStateOf<String?>(null) }
-    
-    var showControls by remember { mutableStateOf(true) }
-    var showSettings by remember { mutableStateOf(false) }
-    
-    var instanceUrl by remember { mutableStateOf(repository.getBaseUrl()) }
-    var centerDownTime by remember { mutableLongStateOf(0L) }
-    var hasVotedCurrentVideo by remember { mutableStateOf(false) }
-    var lastFeedback by remember { mutableStateOf("") }
-
-    fun playCurrentVideo() {
-        if (currentIndex in sessionVideos.indices) {
-            hasVotedCurrentVideo = false
-            val video = sessionVideos[currentIndex]
-            exoPlayer?.let {
-                it.stop()
-                val baseUrl = if (instanceUrl.endsWith("/")) instanceUrl else "$instanceUrl/"
-                val uri = Uri.parse("${baseUrl}videos/${video.filename}")
-                val mediaItem = MediaItem.fromUri(uri)
-                it.setMediaItem(mediaItem)
-                it.prepare()
-                it.play()
-            }
-        }
-    }
-
-    fun loadNextVideo() {
-        if (currentIndex < sessionVideos.size - 1) {
-            currentIndex++
-            playCurrentVideo()
-        } else {
-            coroutineScope.launch {
-                isLoading = true
-                try {
-                    val watchedString = repository.getWatchedString()
-                    val api = RetrofitClient.getApi(instanceUrl)
-                    val video = api.getNextVideo(watchedString)
-                    sessionVideos.add(video)
-                    repository.addWatchedId(video.id)
-                    currentIndex++
-                    playCurrentVideo()
-                } catch (e: Exception) {
-                    Log.e("FunnyTV", "Error loading next video", e)
-                } finally {
-                    isLoading = false
-                }
-            }
-        }
-    }
-    
-    fun loadPreviousVideo() {
-        if (currentIndex > 0) {
-            currentIndex--
-            playCurrentVideo()
-        }
-    }
-
-    fun vote(action: String) {
-        if (hasVotedCurrentVideo) return
-        val video = sessionVideos.getOrNull(currentIndex)
-        video?.let {
-            coroutineScope.launch {
-                hasVotedCurrentVideo = true
-                try {
-                    RetrofitClient.getApi(instanceUrl).voteVideo(it.id, VoteRequest(action))
-                    feedbackMessage = if (action == "up") "👍" else "👎"
-                    delay(2000)
-                    if (feedbackMessage == "👍" || feedbackMessage == "👎") {
-                        feedbackMessage = null
-                    }
-                } catch (e: Exception) {
-                    Log.e("FunnyTV", "Error voting", e)
-                    hasVotedCurrentVideo = false
-                }
-            }
-        }
-    }
+    val feed = remember { FeedController(context, repository, coroutineScope) }
 
     DisposableEffect(Unit) {
-        val player = ExoPlayer.Builder(context).build().apply {
-            repeatMode = Player.REPEAT_MODE_ALL
-            playWhenReady = true
-        }
-        exoPlayer = player
-        loadNextVideo()
-
-        onDispose {
-            player.release()
-        }
+        onDispose { feed.release() }
     }
 
     LaunchedEffect(Unit) {
-        focusRequester.requestFocus()
+        feed.start()
     }
 
-    LaunchedEffect(showSettings) {
-        if (showSettings) {
-            // Give the UI a tiny moment to compose the settings dialog before requesting focus
-            delay(50)
-            try {
-                settingsFocusRequester.requestFocus()
-            } catch (e: Exception) {}
-        } else {
-            try {
-                focusRequester.requestFocus()
-            } catch (e: Exception) {}
+    LaunchedEffect(Unit) {
+        while (true) {
+            feed.syncPlaybackState()
+            delay(200)
         }
     }
 
-    LaunchedEffect(feedbackMessage) {
-        if (feedbackMessage != null) lastFeedback = feedbackMessage!!
-    }
-
-    LaunchedEffect(showControls, showSettings) {
-        if (showControls && !showSettings) {
-            delay(3000)
-            showControls = false
+    // Settings live in a separate screen on mobile, so pick up any change on return.
+    val lifecycleOwner = LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) feed.refreshFromPrefs()
         }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
 
-    Box(
+    BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
-            .background(Color.Black)
-            .focusRequester(focusRequester)
-            .focusable()
-            .onKeyEvent { keyEvent ->
-                if (showSettings) {
-                    if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN && keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_BACK) {
-                        showSettings = false
-                        return@onKeyEvent true
-                    }
-                    // Let the focus system handle the keys for the buttons inside settings
-                    return@onKeyEvent false
-                }
-
-                if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
-                    showControls = true
-
-                    when (keyEvent.nativeKeyEvent.keyCode) {
-                        KeyEvent.KEYCODE_DPAD_DOWN -> {
-                            loadNextVideo()
-                            true
-                        }
-                        KeyEvent.KEYCODE_DPAD_UP -> {
-                            loadPreviousVideo()
-                            true
-                        }
-                        KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                            vote("up")
-                            true
-                        }
-                        KeyEvent.KEYCODE_DPAD_LEFT -> {
-                            vote("down")
-                            true
-                        }
-                        KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
-                            if (keyEvent.nativeKeyEvent.repeatCount == 0) {
-                                centerDownTime = System.currentTimeMillis()
-                            }
-                            true
-                        }
-                        else -> false
-                    }
-                } else if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_UP) {
-                    if (keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_DPAD_CENTER || keyEvent.nativeKeyEvent.keyCode == KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE) {
-                        if (centerDownTime > 0) {
-                            val duration = System.currentTimeMillis() - centerDownTime
-                            if (duration > 600) {
-                                showSettings = true
-                            } else {
-                                exoPlayer?.let {
-                                    if (it.isPlaying) it.pause() else it.play()
-                                }
-                            }
-                        }
-                        centerDownTime = 0L
-                        true
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                }
-            },
+            .background(FunnyColors.Background),
         contentAlignment = Alignment.Center
     ) {
-        if (isLoading && sessionVideos.isEmpty()) {
-            Text("Loading...", color = Color.White)
-        } else if (sessionVideos.isEmpty()) {
-            Text("No more videos available.", color = Color.White)
+        val heightPx = with(LocalDensity.current) { maxHeight.toPx() }
+        val scroll = remember(heightPx) { FeedScroll(feed, coroutineScope, heightPx) }
+
+        if (feed.videos.isEmpty()) {
+            Text(
+                if (feed.isLoading) "Loading..." else "No more videos available.",
+                color = FunnyColors.Text
+            )
         } else {
-            AnimatedContent(
-                targetState = currentIndex,
-                transitionSpec = {
-                    if (targetState > initialState) {
-                        slideInVertically(
-                            animationSpec = tween(500),
-                            initialOffsetY = { fullHeight -> fullHeight }
-                        ) togetherWith slideOutVertically(
-                            animationSpec = tween(500),
-                            targetOffsetY = { fullHeight -> -fullHeight }
-                        )
-                    } else {
-                        slideInVertically(
-                            animationSpec = tween(500),
-                            initialOffsetY = { fullHeight -> -fullHeight }
-                        ) togetherWith slideOutVertically(
-                            animationSpec = tween(500),
-                            targetOffsetY = { fullHeight -> fullHeight }
-                        )
-                    }
-                },
-                label = "VideoScroll"
-            ) { index ->
-                if (index in sessionVideos.indices) {
-                    AndroidView(
-                        factory = { ctx ->
-                            PlayerView(ctx).apply {
-                                player = exoPlayer
-                                useController = false
-                            }
-                        },
-                        modifier = Modifier.fillMaxSize()
-                    )
-                }
-            }
-
-            AnimatedVisibility(
-                visible = showControls,
-                enter = fadeIn(tween(300)),
-                exit = fadeOut(tween(500)),
-                modifier = Modifier.align(Alignment.BottomStart)
-            ) {
-                Row(
+            // Each surface keeps its own player for the whole session; only the
+            // offsets change, so swapping never re-attaches a video surface.
+            feed.players.forEachIndexed { slot, player ->
+                val restingOffset = if (slot == feed.activeSlot) 0f else heightPx
+                PlayerSurface(
+                    player = player,
                     modifier = Modifier
-                        .padding(32.dp)
-                        .background(Color.Black.copy(alpha = 0.7f), RoundedCornerShape(12.dp))
-                        .padding(vertical = 12.dp, horizontal = 20.dp),
-                    horizontalArrangement = Arrangement.spacedBy(24.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.ArrowUpward, contentDescription = "Prev", tint = Color.White, modifier = Modifier.size(16.dp))
-                            Icon(Icons.Default.ArrowDownward, contentDescription = "Next", tint = Color.White, modifier = Modifier.size(16.dp))
+                        .fillMaxSize()
+                        .offset {
+                            IntOffset(0, (scroll.offset.value + restingOffset).roundToInt())
                         }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Navigate", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.ThumbDown, contentDescription = "Left", tint = Color.White, modifier = Modifier.size(16.dp))
-                            Spacer(modifier = Modifier.width(2.dp))
-                            Icon(Icons.Default.ThumbUp, contentDescription = "Right", tint = Color.White, modifier = Modifier.size(16.dp))
-                        }
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Vote", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.PlayArrow, contentDescription = "Center", tint = Color.White, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Play/Pause", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                    }
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Default.Settings, contentDescription = "Long Center", tint = Color.White, modifier = Modifier.size(20.dp))
-                        Spacer(modifier = Modifier.width(8.dp))
-                        Text("Hold Center for Settings", color = Color.White, style = MaterialTheme.typography.titleMedium)
-                    }
-                }
+                )
             }
 
             AnimatedVisibility(
-                visible = feedbackMessage != null,
+                visible = !feed.isPlaying,
+                enter = fadeIn(tween(150)),
+                exit = fadeOut(tween(300)),
+                modifier = Modifier.align(Alignment.Center)
+            ) {
+                PausedIndicator()
+            }
+
+            AnimatedVisibility(
+                visible = feed.voteFeedback != null,
                 enter = fadeIn(tween(300)),
                 exit = fadeOut(tween(500)),
                 modifier = Modifier.align(Alignment.Center)
             ) {
                 Text(
-                    text = lastFeedback,
+                    text = feed.voteFeedback ?: "",
                     color = Color.White,
-                    style = MaterialTheme.typography.displayLarge,
+                    style = MaterialTheme.typography.displayLarge
                 )
             }
         }
-        
-        if (showSettings) {
-            var editingUrl by remember { mutableStateOf(instanceUrl) }
-            Box(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .background(Color.Black.copy(alpha = 0.8f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Column(
-                    modifier = Modifier
-                        .background(Color.DarkGray, RoundedCornerShape(12.dp))
-                        .padding(32.dp),
-                    horizontalAlignment = Alignment.CenterHorizontally
-                ) {
-                    Text("Settings", style = MaterialTheme.typography.headlineMedium, color = Color.White)
-                    Spacer(modifier = Modifier.height(16.dp))
-                    Text("Server Instance URL", color = Color.White)
-                    Spacer(modifier = Modifier.height(8.dp))
-                    
-                    Box(
-                        modifier = Modifier
-                            .background(Color.Black.copy(alpha = 0.3f), RoundedCornerShape(4.dp))
-                            .padding(16.dp)
-                    ) {
-                        BasicTextField(
-                            value = editingUrl,
-                            onValueChange = { editingUrl = it },
-                            textStyle = TextStyle(color = Color.White, fontSize = 20.sp),
-                            modifier = Modifier
-                                .width(300.dp)
-                                .focusRequester(settingsFocusRequester),
-                            cursorBrush = SolidColor(Color.White)
-                        )
-                    }
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
-                    
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        Button(
-                            onClick = {
-                                instanceUrl = editingUrl
-                                repository.setBaseUrl(instanceUrl)
-                                sessionVideos.clear()
-                                currentIndex = -1
-                                loadNextVideo()
-                                showSettings = false
-                            }
-                        ) {
-                            Text("Apply URL")
-                        }
-                        Button(onClick = {
-                            editingUrl = "https://funny.mfc.pw"
-                        }) {
-                            Text("Reset to Default")
-                        }
-                    }
-                    
-                    Spacer(modifier = Modifier.height(16.dp))
-                    OutlinedButton(onClick = {
-                        showSettings = false
-                    }) {
-                        Text("Close", color = Color.White)
-                    }
-                }
-            }
+
+        PlatformControls(
+            feed = feed,
+            scroll = scroll,
+            modifier = Modifier.fillMaxSize()
+        )
+
+        AnimatedVisibility(
+            visible = feed.status != null,
+            enter = fadeIn(tween(200)),
+            exit = fadeOut(tween(400)),
+            modifier = Modifier.align(Alignment.TopCenter)
+        ) {
+            StatusPill(feed.status ?: "")
         }
     }
+}
+
+@Composable
+private fun PlayerSurface(player: ExoPlayer, modifier: Modifier = Modifier) {
+    AndroidView(
+        factory = { ctx ->
+            PlayerView(ctx).apply {
+                useController = false
+                setBackgroundColor(android.graphics.Color.BLACK)
+            }
+        },
+        update = { it.player = player },
+        modifier = modifier
+    )
 }
