@@ -6,7 +6,6 @@ import android.content.SharedPreferences
 class WatchedRepository(context: Context) {
     private val prefs: SharedPreferences = context.getSharedPreferences("funny_prefs", Context.MODE_PRIVATE)
     private val WATCHED_KEY = "watched_ids"
-    private val VOTED_KEY = "voted_ids"
     private val MAX_IDS = 500
 
     fun addWatchedId(id: Int) {
@@ -32,23 +31,6 @@ class WatchedRepository(context: Context) {
 
     private fun saveIds(ids: List<Int>) {
         prefs.edit().putString(WATCHED_KEY, ids.joinToString(",")).apply()
-    }
-
-    fun addVotedId(id: Int) {
-        val currentIds = getVotedIds().toMutableList()
-        if (!currentIds.contains(id)) {
-            currentIds.add(id)
-            if (currentIds.size > MAX_IDS) {
-                currentIds.removeAt(0)
-            }
-            prefs.edit().putString(VOTED_KEY, currentIds.joinToString(",")).apply()
-        }
-    }
-
-    fun getVotedIds(): List<Int> {
-        val stringData = prefs.getString(VOTED_KEY, "") ?: ""
-        if (stringData.isEmpty()) return emptyList()
-        return stringData.split(",").mapNotNull { it.toIntOrNull() }
     }
 
     private val BASE_URL_KEY = "base_url"

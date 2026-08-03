@@ -1,63 +1,154 @@
 package com.pukikiko.funny.ui
 
+import android.net.Uri
+import kotlin.OptIn
+import android.util.Log
 import android.view.KeyEvent
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
+import androidx.compose.animation.*
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.pager.VerticalPager
-import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.*
+import androidx.compose.material.icons.filled.ArrowDownward
+import androidx.compose.material.icons.filled.ArrowUpward
+import androidx.compose.material.icons.filled.PlayArrow
+import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.ThumbDown
+import androidx.compose.material.icons.filled.ThumbUp
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.onKeyEvent
-import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.unit.sp
-import androidx.tv.material3.Button
-import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.media3.common.MediaItem
+import androidx.media3.common.Player
+import androidx.media3.exoplayer.ExoPlayer
+import androidx.media3.ui.PlayerView
+import androidx.tv.material3.Text
 import androidx.tv.material3.Icon
 import androidx.tv.material3.MaterialTheme
+import androidx.tv.material3.ExperimentalTvMaterial3Api
+import androidx.tv.material3.Button
 import androidx.tv.material3.OutlinedButton
-import androidx.tv.material3.Text
+import com.pukikiko.funny.api.RetrofitClient
+import com.pukikiko.funny.api.VideoModel
+import com.pukikiko.funny.api.VoteRequest
+import com.pukikiko.funny.data.WatchedRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
-@OptIn(ExperimentalFoundationApi::class, ExperimentalTvMaterial3Api::class)
+@OptIn(ExperimentalTvMaterial3Api::class, ExperimentalAnimationApi::class)
 @Composable
-fun TvPlayerScreen(viewModel: VideoPlayerViewModel) {
-    val videos by viewModel.videos.collectAsState()
-    val isLoading by viewModel.isLoading.collectAsState()
-    val instanceUrl by viewModel.instanceUrl.collectAsState()
-    val feedbackMessage by viewModel.feedbackMessage.collectAsState()
-    val votedVideoIds by viewModel.votedVideoIds.collectAsState()
-
-    val pagerState = rememberPagerState(pageCount = { videos.size })
+fun VideoPlayerScreen(repository: WatchedRepository) {
+    val context = LocalContext.current
     val coroutineScope = rememberCoroutineScope()
     
+    val sessionVideos = remember { mutableStateListOf<VideoModel>() }
+    var currentIndex by remember { mutableIntStateOf(-1) }
+    
+    var isLoading by remember { mutableStateOf(true) }
+    var exoPlayer by remember { mutableStateOf<ExoPlayer?>(null) }
     val focusRequester = remember { FocusRequester() }
     val settingsFocusRequester = remember { FocusRequester() }
+    var feedbackMessage by remember { mutableStateOf<String?>(null) }
     
-    var showSettings by remember { mutableStateOf(false) }
     var showControls by remember { mutableStateOf(true) }
-    var isPlaying by remember { mutableStateOf(true) }
-    var centerDownTime by remember { mutableLongStateOf(0L) }
+    var showSettings by remember { mutableStateOf(false) }
     
-    LaunchedEffect(videos.size, pagerState.currentPage) {
-        if (videos.isNotEmpty() && pagerState.currentPage >= videos.size - 2) {
-            viewModel.loadNextVideo()
+    var instanceUrl by remember { mutableStateOf(repository.getBaseUrl()) }
+    var centerDownTime by remember { mutableLongStateOf(0L) }
+    var hasVotedCurrentVideo by remember { mutableStateOf(false) }
+    var lastFeedback by remember { mutableStateOf("") }
+
+    fun playCurrentVideo() {
+        if (currentIndex in sessionVideos.indices) {
+            hasVotedCurrentVideo = false
+            val video = sessionVideos[currentIndex]
+            exoPlayer?.let {
+                it.stop()
+                val baseUrl = if (instanceUrl.endsWith("/")) instanceUrl else "$instanceUrl/"
+                val uri = Uri.parse("${baseUrl}videos/${video.filename}")
+                val mediaItem = MediaItem.fromUri(uri)
+                it.setMediaItem(mediaItem)
+                it.prepare()
+                it.play()
+            }
+        }
+    }
+
+    fun loadNextVideo() {
+        if (currentIndex < sessionVideos.size - 1) {
+            currentIndex++
+            playCurrentVideo()
+        } else {
+            coroutineScope.launch {
+                isLoading = true
+                try {
+                    val watchedString = repository.getWatchedString()
+                    val api = RetrofitClient.getApi(instanceUrl)
+                    val video = api.getNextVideo(watchedString)
+                    sessionVideos.add(video)
+                    repository.addWatchedId(video.id)
+                    currentIndex++
+                    playCurrentVideo()
+                } catch (e: Exception) {
+                    Log.e("FunnyTV", "Error loading next video", e)
+                } finally {
+                    isLoading = false
+                }
+            }
+        }
+    }
+    
+    fun loadPreviousVideo() {
+        if (currentIndex > 0) {
+            currentIndex--
+            playCurrentVideo()
+        }
+    }
+
+    fun vote(action: String) {
+        if (hasVotedCurrentVideo) return
+        val video = sessionVideos.getOrNull(currentIndex)
+        video?.let {
+            coroutineScope.launch {
+                hasVotedCurrentVideo = true
+                try {
+                    RetrofitClient.getApi(instanceUrl).voteVideo(it.id, VoteRequest(action))
+                    feedbackMessage = if (action == "up") "👍" else "👎"
+                    delay(2000)
+                    if (feedbackMessage == "👍" || feedbackMessage == "👎") {
+                        feedbackMessage = null
+                    }
+                } catch (e: Exception) {
+                    Log.e("FunnyTV", "Error voting", e)
+                    hasVotedCurrentVideo = false
+                }
+            }
+        }
+    }
+
+    DisposableEffect(Unit) {
+        val player = ExoPlayer.Builder(context).build().apply {
+            repeatMode = Player.REPEAT_MODE_ALL
+            playWhenReady = true
+        }
+        exoPlayer = player
+        loadNextVideo()
+
+        onDispose {
+            player.release()
         }
     }
 
@@ -67,11 +158,20 @@ fun TvPlayerScreen(viewModel: VideoPlayerViewModel) {
 
     LaunchedEffect(showSettings) {
         if (showSettings) {
+            // Give the UI a tiny moment to compose the settings dialog before requesting focus
             delay(50)
-            try { settingsFocusRequester.requestFocus() } catch (e: Exception) {}
+            try {
+                settingsFocusRequester.requestFocus()
+            } catch (e: Exception) {}
         } else {
-            try { focusRequester.requestFocus() } catch (e: Exception) {}
+            try {
+                focusRequester.requestFocus()
+            } catch (e: Exception) {}
         }
+    }
+
+    LaunchedEffect(feedbackMessage) {
+        if (feedbackMessage != null) lastFeedback = feedbackMessage!!
     }
 
     LaunchedEffect(showControls, showSettings) {
@@ -93,40 +193,28 @@ fun TvPlayerScreen(viewModel: VideoPlayerViewModel) {
                         showSettings = false
                         return@onKeyEvent true
                     }
+                    // Let the focus system handle the keys for the buttons inside settings
                     return@onKeyEvent false
                 }
 
                 if (keyEvent.nativeKeyEvent.action == KeyEvent.ACTION_DOWN) {
                     showControls = true
+
                     when (keyEvent.nativeKeyEvent.keyCode) {
                         KeyEvent.KEYCODE_DPAD_DOWN -> {
-                            coroutineScope.launch {
-                                if (pagerState.currentPage < videos.size - 1) {
-                                    pagerState.animateScrollToPage(pagerState.currentPage + 1)
-                                    isPlaying = true
-                                }
-                            }
+                            loadNextVideo()
                             true
                         }
                         KeyEvent.KEYCODE_DPAD_UP -> {
-                            coroutineScope.launch {
-                                if (pagerState.currentPage > 0) {
-                                    pagerState.animateScrollToPage(pagerState.currentPage - 1)
-                                    isPlaying = true
-                                }
-                            }
+                            loadPreviousVideo()
                             true
                         }
                         KeyEvent.KEYCODE_DPAD_RIGHT -> {
-                            if (videos.isNotEmpty()) {
-                                viewModel.vote(videos[pagerState.currentPage].id, "up")
-                            }
+                            vote("up")
                             true
                         }
                         KeyEvent.KEYCODE_DPAD_LEFT -> {
-                            if (videos.isNotEmpty()) {
-                                viewModel.vote(videos[pagerState.currentPage].id, "down")
-                            }
+                            vote("down")
                             true
                         }
                         KeyEvent.KEYCODE_DPAD_CENTER, KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE -> {
@@ -144,7 +232,9 @@ fun TvPlayerScreen(viewModel: VideoPlayerViewModel) {
                             if (duration > 600) {
                                 showSettings = true
                             } else {
-                                isPlaying = !isPlaying
+                                exoPlayer?.let {
+                                    if (it.isPlaying) it.pause() else it.play()
+                                }
                             }
                         }
                         centerDownTime = 0L
@@ -158,25 +248,45 @@ fun TvPlayerScreen(viewModel: VideoPlayerViewModel) {
             },
         contentAlignment = Alignment.Center
     ) {
-        if (videos.isEmpty() && isLoading) {
+        if (isLoading && sessionVideos.isEmpty()) {
             Text("Loading...", color = Color.White)
-        } else if (videos.isEmpty()) {
+        } else if (sessionVideos.isEmpty()) {
             Text("No more videos available.", color = Color.White)
         } else {
-            VerticalPager(
-                state = pagerState,
-                modifier = Modifier.fillMaxSize(),
-                userScrollEnabled = false // Managed by D-Pad keys
-            ) { page ->
-                val video = videos[page]
-                val baseUrl = if (instanceUrl.endsWith("/")) instanceUrl else "$instanceUrl/"
-                val videoUrl = "${baseUrl}videos/${video.filename}"
-                val isVisible = (page == pagerState.currentPage)
-                VideoPlayerItem(
-                    videoUrl = videoUrl,
-                    isPlaying = isVisible && isPlaying,
-                    modifier = Modifier.fillMaxSize()
-                )
+            AnimatedContent(
+                targetState = currentIndex,
+                transitionSpec = {
+                    if (targetState > initialState) {
+                        slideInVertically(
+                            animationSpec = tween(500),
+                            initialOffsetY = { fullHeight -> fullHeight }
+                        ) togetherWith slideOutVertically(
+                            animationSpec = tween(500),
+                            targetOffsetY = { fullHeight -> -fullHeight }
+                        )
+                    } else {
+                        slideInVertically(
+                            animationSpec = tween(500),
+                            initialOffsetY = { fullHeight -> -fullHeight }
+                        ) togetherWith slideOutVertically(
+                            animationSpec = tween(500),
+                            targetOffsetY = { fullHeight -> fullHeight }
+                        )
+                    }
+                },
+                label = "VideoScroll"
+            ) { index ->
+                if (index in sessionVideos.indices) {
+                    AndroidView(
+                        factory = { ctx ->
+                            PlayerView(ctx).apply {
+                                player = exoPlayer
+                                useController = false
+                            }
+                        },
+                        modifier = Modifier.fillMaxSize()
+                    )
+                }
             }
 
             AnimatedVisibility(
@@ -202,15 +312,13 @@ fun TvPlayerScreen(viewModel: VideoPlayerViewModel) {
                         Text("Navigate", color = Color.White, style = MaterialTheme.typography.titleMedium)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        val hasVoted = videos.isNotEmpty() && votedVideoIds.contains(videos[pagerState.currentPage].id)
-                        val iconTint = if (hasVoted) Color.White.copy(alpha = 0.5f) else Color.White
                         Row(verticalAlignment = Alignment.CenterVertically) {
-                            Icon(Icons.Default.ThumbDown, contentDescription = "Left", tint = iconTint, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.ThumbDown, contentDescription = "Left", tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(2.dp))
-                            Icon(Icons.Default.ThumbUp, contentDescription = "Right", tint = iconTint, modifier = Modifier.size(16.dp))
+                            Icon(Icons.Default.ThumbUp, contentDescription = "Right", tint = Color.White, modifier = Modifier.size(16.dp))
                         }
                         Spacer(modifier = Modifier.width(8.dp))
-                        Text("Vote", color = iconTint, style = MaterialTheme.typography.titleMedium)
+                        Text("Vote", color = Color.White, style = MaterialTheme.typography.titleMedium)
                     }
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Icon(Icons.Default.PlayArrow, contentDescription = "Center", tint = Color.White, modifier = Modifier.size(20.dp))
@@ -224,20 +332,18 @@ fun TvPlayerScreen(viewModel: VideoPlayerViewModel) {
                     }
                 }
             }
-            
+
             AnimatedVisibility(
                 visible = feedbackMessage != null,
                 enter = fadeIn(tween(300)),
                 exit = fadeOut(tween(500)),
                 modifier = Modifier.align(Alignment.Center)
             ) {
-                if (feedbackMessage != null) {
-                    Text(
-                        text = feedbackMessage!!,
-                        color = Color.White,
-                        style = MaterialTheme.typography.displayLarge,
-                    )
-                }
+                Text(
+                    text = lastFeedback,
+                    color = Color.White,
+                    style = MaterialTheme.typography.displayLarge,
+                )
             }
         }
         
@@ -281,7 +387,11 @@ fun TvPlayerScreen(viewModel: VideoPlayerViewModel) {
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Button(
                             onClick = {
-                                viewModel.setInstanceUrl(editingUrl)
+                                instanceUrl = editingUrl
+                                repository.setBaseUrl(instanceUrl)
+                                sessionVideos.clear()
+                                currentIndex = -1
+                                loadNextVideo()
                                 showSettings = false
                             }
                         ) {
