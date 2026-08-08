@@ -45,6 +45,7 @@ class WatchedRepository(context: Context) {
 
     private val MODE_KEY = "feed_mode"
     private val VOLUME_KEY = "volume"
+    private val AUTO_SCROLL_KEY = "auto_scroll"
 
     fun getFeedMode(): String {
         val mode = prefs.getString(MODE_KEY, FeedMode.DEFAULT)
@@ -62,6 +63,14 @@ class WatchedRepository(context: Context) {
 
     fun setVolume(volume: Float) {
         prefs.edit().putFloat(VOLUME_KEY, volume.coerceIn(0f, 1f)).apply()
+    }
+
+    fun getAutoScroll(): Boolean {
+        return prefs.getBoolean(AUTO_SCROLL_KEY, false)
+    }
+
+    fun setAutoScroll(enabled: Boolean) {
+        prefs.edit().putBoolean(AUTO_SCROLL_KEY, enabled).apply()
     }
 }
 

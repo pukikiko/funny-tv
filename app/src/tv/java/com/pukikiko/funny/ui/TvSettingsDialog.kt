@@ -6,12 +6,15 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -63,6 +66,8 @@ fun TvSettingsDialog(feed: FeedController, onDismiss: () -> Unit) {
     ) {
         Column(
             modifier = Modifier
+                .fillMaxHeight(0.9f)
+                .verticalScroll(rememberScrollState())
                 .background(FunnyColors.Panel, RoundedCornerShape(16.dp))
                 .padding(32.dp),
             horizontalAlignment = Alignment.CenterHorizontally
@@ -106,6 +111,14 @@ fun TvSettingsDialog(feed: FeedController, onDismiss: () -> Unit) {
             Spacer(Modifier.height(8.dp))
             Button(onClick = { feed.cycleMode() }) {
                 Text(FeedMode.label(feed.feedMode))
+            }
+
+            Spacer(Modifier.height(24.dp))
+
+            Text("Auto-scroll", color = FunnyColors.Muted)
+            Spacer(Modifier.height(8.dp))
+            Button(onClick = { feed.updateAutoScroll(!feed.autoScroll) }) {
+                Text(if (feed.autoScroll) "On — next video plays automatically" else "Off")
             }
 
             Spacer(Modifier.height(24.dp))

@@ -30,6 +30,7 @@ import androidx.compose.material3.RadioButton
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Slider
 import androidx.compose.material3.Surface
+import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
 import androidx.compose.material3.darkColorScheme
@@ -86,6 +87,7 @@ private fun SettingsScreen(repository: WatchedRepository, onBack: () -> Unit) {
     var instanceUrl by remember { mutableStateOf(repository.getBaseUrl()) }
     var feedMode by remember { mutableStateOf(repository.getFeedMode()) }
     var volume by remember { mutableFloatStateOf(repository.getVolume()) }
+    var autoScroll by remember { mutableStateOf(repository.getAutoScroll()) }
 
     Scaffold(
         topBar = {
@@ -163,6 +165,29 @@ private fun SettingsScreen(repository: WatchedRepository, onBack: () -> Unit) {
                     repository.setVolume(it)
                 }
             )
+
+            SectionDivider()
+
+            SectionTitle("Auto-scroll")
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    "Automatically advance to the next video when one ends",
+                    style = MaterialTheme.typography.bodyLarge,
+                    modifier = Modifier.weight(1f)
+                )
+                Switch(
+                    checked = autoScroll,
+                    onCheckedChange = {
+                        autoScroll = it
+                        repository.setAutoScroll(it)
+                    }
+                )
+            }
 
             Spacer(Modifier.height(24.dp))
         }

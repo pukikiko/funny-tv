@@ -68,8 +68,13 @@ class FeedController(
         private set
     var feedMode by mutableStateOf(repository.getFeedMode())
         private set
+    var autoScroll by mutableStateOf(repository.getAutoScroll())
+        private set
     var instanceUrl by mutableStateOf(repository.getBaseUrl())
         private set
+
+    /** Invoked when the current video ends and auto-scroll is enabled. */
+    var onAutoScroll: (() -> Unit)? = null
 
     /** "up", "down", or null when the current video hasn't been voted on. */
     var votedAction by mutableStateOf<String?>(null)
@@ -91,6 +96,15 @@ class FeedController(
             repeatMode = Player.REPEAT_MODE_ALL
             playWhenReady = false
             volume = repository.getVolume()
+            addListener(object : Player.Listener {
+                override fun onMediaItemTransition(mediaItem: MediaItem?, reason: Int) {
+                    // REPEAT_MODE_ALL loops the video back to itself when it ends.
+                    // That loop is the cue to auto-scroll on to the next one.
+                    if (reason == Player.MEDIA_ITEM_TRANSITION_REASON_REPEAT && autoScroll) {
+                        onAutoScroll?.invoke()
+                    }
+                }
+            })
         }
 
     fun release() {
@@ -249,6 +263,13 @@ class FeedController(
         showStatus("Mode: ${FeedMode.label(feedMode)}")
     }
 
+    // ---- Auto-scroll ----
+
+    fun updateAutoScroll(enabled: Boolean) {
+        autoScroll = enabled
+        repository.setAutoScroll(enabled)
+    }
+
     private fun applyFeedMode(mode: String) {
         feedMode = mode
         // Drop anything queued under the old mode so the switch takes effect now.
@@ -330,6 +351,9 @@ class FeedController(
 
         val savedMode = repository.getFeedMode()
         if (savedMode != feedMode) applyFeedMode(savedMode)
+
+        val savedAutoScroll = repository.getAutoScroll()
+        if (savedAutoScroll != autoScroll) autoScroll = savedAutoScroll
 
         val savedUrl = repository.getBaseUrl()
         if (savedUrl != instanceUrl) {

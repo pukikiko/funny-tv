@@ -78,6 +78,12 @@ fun VideoPlayerScreen(repository: WatchedRepository) {
         val heightPx = with(LocalDensity.current) { maxHeight.toPx() }
         val scroll = remember(heightPx) { FeedScroll(feed, coroutineScope, heightPx) }
 
+        // Auto-scroll reaches the next video through the same animated swipe.
+        DisposableEffect(scroll) {
+            feed.onAutoScroll = { scroll.next() }
+            onDispose { feed.onAutoScroll = null }
+        }
+
         if (feed.videos.isEmpty()) {
             Text(
                 if (feed.isLoading) "Loading..." else "No more videos available.",
