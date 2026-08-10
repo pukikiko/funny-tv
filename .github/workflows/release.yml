@@ -138,14 +138,29 @@ jobs:
 
           # Obtainium reads the version out of the APK and compares it with the
           # release tag, so a mismatch here would show up as a permanent update.
-          AAPT="$ANDROID_HOME/build-tools/34.0.0/aapt"
-          BADGING=$("$AAPT" dump badging "$APK")
-          PACKAGE=$(printf '%s\n' "$BADGING" | grep '^package:' || true)
-          echo "$PACKAGE"
-          case "$PACKAGE" in
-            *"versionName='$VERSION'"*) ;;
-            *) echo "::error::APK versionName does not match $VERSION"; exit 1 ;;
-          esac
+          #
+          # Read the manifest rather than `dump badging`: badging resolves
+          # android:icon/banner as a side effect and exits non-zero if it cannot
+          # (aapt1 did exactly that while the icon was an @android: framework
+          # resource). xmltree just reads the literal attribute.
+          AAPT2="$ANDROID_HOME/build-tools/34.0.0/aapt2"
+          XMLTREE=$("$AAPT2" dump xmltree "$APK" --file AndroidManifest.xml 2>/dev/null || true)
+          APK_VERSION=$(printf '%s\n' "$XMLTREE" \
+            | sed -n 's/.*android:versionName[^=]*="\([^"]*\)".*/\1/p' \
+            | awk 'NR==1')
+
+          if [ -z "$APK_VERSION" ]; then
+            # Fall back to what the Android Gradle plugin recorded for this APK.
+            META="app/build/outputs/apk/${{ matrix.flavor }}/release/output-metadata.json"
+            echo "::warning::Could not read versionName via aapt2; falling back to $META"
+            APK_VERSION=$(python3 -c "import json,sys; print(json.load(open(sys.argv[1]))['elements'][0]['versionName'])" "$META")
+          fi
+
+          echo "APK versionName: $APK_VERSION"
+          if [ "$APK_VERSION" != "$VERSION" ]; then
+            echo "::error::APK versionName '$APK_VERSION' does not match release version '$VERSION'"
+            exit 1
+          fi
 
           NAME="funny-${{ matrix.flavor }}-$VERSION.apk"
           mv "$APK" "$NAME"
