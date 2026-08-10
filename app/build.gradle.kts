@@ -3,6 +3,12 @@ plugins {
     id("org.jetbrains.kotlin.android")
 }
 
+// Release CI passes the tag through as -PappVersionName / -PappVersionCode so the
+// APK reports the same version Obtainium reads off the GitHub release. Local and
+// PR builds fall back to the placeholder below.
+val appVersionName = (findProperty("appVersionName") as String?) ?: "0.0.0"
+val appVersionCode = (findProperty("appVersionCode") as String?)?.toInt() ?: 1
+
 android {
     namespace = "com.pukikiko.funny"
     compileSdk = 34
@@ -11,22 +17,23 @@ android {
         applicationId = "com.pukikiko.funny"
         minSdk = 26
         targetSdk = 34
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = appVersionCode
+        versionName = appVersionName
         vectorDrawables {
             useSupportLibrary = true
         }
     }
 
+    // No versionNameSuffix on either flavor: Obtainium checks the version baked
+    // into the APK against the release tag, and "1.2.3-tv" does not match "1.2.3".
+    // The flavor lives in the APK file name instead.
     flavorDimensions += "formFactor"
     productFlavors {
         create("tv") {
             dimension = "formFactor"
-            versionNameSuffix = "-tv"
         }
         create("mobile") {
             dimension = "formFactor"
-            versionNameSuffix = "-mobile"
             // What Android Studio selects on a fresh sync; switch in the
             // Build Variants panel to run the tv build.
             isDefault = true
