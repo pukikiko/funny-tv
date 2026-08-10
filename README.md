@@ -55,9 +55,23 @@ share, upload and settings. Settings is its own screen.
 ## Install with Obtainium
 
 [Obtainium](https://github.com/ImranR98/Obtainium) installs the APK straight from
-this repo's GitHub releases and keeps it updated.
+this repo's GitHub releases and keeps it updated. Tap the button for your device —
+it opens Obtainium with the source, the APK filter and the app name already filled in.
 
-1. **Add App** → URL: `https://github.com/ch4rdotnet/funny-tv`
+| Android TV / Google TV | Phones and tablets |
+| :---: | :---: |
+| <a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium%3A%2F%2Fapp%2F%7B%22id%22%3A%22com.pukikiko.funny%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2Fpukikiko%2Ffunny-tv%22%2C%22author%22%3A%22pukikiko%22%2C%22name%22%3A%22Funny%20TV%22%2C%22preferredApkIndex%22%3A0%2C%22additionalSettings%22%3A%22%7B%5C%22apkFilterRegEx%5C%22%3A%5C%22funny-tv-%5C%22%2C%5C%22invertAPKFilter%5C%22%3Afalse%2C%5C%22autoApkFilterByArch%5C%22%3Afalse%7D%22%7D"><img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Add Funny TV to Obtainium" height="70"></a> | <a href="https://apps.obtainium.imranr.dev/redirect?r=obtainium%3A%2F%2Fapp%2F%7B%22id%22%3A%22com.pukikiko.funny%22%2C%22url%22%3A%22https%3A%2F%2Fgithub.com%2Fpukikiko%2Ffunny-tv%22%2C%22author%22%3A%22pukikiko%22%2C%22name%22%3A%22Funny%22%2C%22preferredApkIndex%22%3A0%2C%22additionalSettings%22%3A%22%7B%5C%22apkFilterRegEx%5C%22%3A%5C%22funny-mobile-%5C%22%2C%5C%22invertAPKFilter%5C%22%3Afalse%2C%5C%22autoApkFilterByArch%5C%22%3Afalse%7D%22%7D"><img src="https://raw.githubusercontent.com/ImranR98/Obtainium/main/assets/graphics/badge_obtainium.png" alt="Add Funny to Obtainium" height="70"></a> |
+
+The buttons go through `apps.obtainium.imranr.dev`, which bounces to the
+`obtainium://` link. GitHub strips custom URL schemes out of README links, so it
+cannot be linked directly; the redirect page is part of the Obtainium project and
+carries the config in the URL rather than storing anything. If your browser refuses
+the hand-off, turn on "Allow forward URL requests to external intents" (or similar)
+in its settings.
+
+To add it by hand instead — on a TV, where there is no convenient browser:
+
+1. **Add App** → URL: `https://github.com/pukikiko/funny-tv`
 2. Set **Filter APKs by Regular Expression** to the variant you want:
    - `funny-tv-` for Android TV / Google TV
    - `funny-mobile-` for phones and tablets
@@ -66,9 +80,6 @@ this repo's GitHub releases and keeps it updated.
 The filter matters: every release carries both variants, and without it Obtainium
 asks which APK to take on each update. Both variants share the applicationId
 `com.pukikiko.funny`, so only one can be installed on a given device at a time.
-
-On a TV, install Obtainium once by sideloading it and drive it with the D-pad, or
-push the APK over ADB from a computer.
 
 ## Installation & Build Instructions
 
